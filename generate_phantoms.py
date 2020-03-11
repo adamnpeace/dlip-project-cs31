@@ -1,54 +1,10 @@
 import os
+import time
+import astra
+import skimage
 import numpy as np
-import tomopy
+from matplotlib import pyplot as plt
 from PIL import Image
-
-add_noise = True
-n_samples = 2000
-allow_existing_folder = True
-initialOffset = 0
-folder_path = "out_noisy_pairs"
-
-
-def bnw(image):
-    for i in range(len(image)):
-        for j in range(len(image[i])):
-            if image[i][j] < 1:
-                image[i][j] = 0
-            else:
-                image[i][j] = 1
-
-
-def noisy(noise_typ, image):
-    if noise_typ == "gauss":
-        row, col, ch = image.shape
-        mean = 0
-        var = 0.1
-        sigma = var ** 0.5
-        gauss = np.random.normal(mean, sigma, (row, col, ch))
-        gauss = gauss.reshape(row, col, ch)
-        noisy = image + gauss
-        return noisy
-    elif noise_typ == "poisson":
-        vals = len(np.unique(image))
-        vals = 2 ** np.ceil(np.log2(vals))
-        noisy = np.random.poisson(image * vals) / float(vals)
-        return noisy
-    elif noise_typ == "speckle":
-        row, col, ch = image.shape
-        gauss = np.random.randn(row, col, ch)
-        gauss = gauss.reshape(row, col, ch)
-        noisy = image + image * gauss
-        return noisy
-    else:
-        print("Unknown Noise")
-
-
-def crop_center(img, cropx, cropy):
-    y, x = img.shape
-    startx = x // 2 - (cropx // 2)
-    starty = y // 2 - (cropy // 2)
-    return img[starty : starty + cropy, startx : startx + cropx]
 
 
 def ran():
@@ -59,11 +15,10 @@ def phantom(n=128, ellipses=None, nE=5):
     """
     ellipses : Custom set of ellipses to use.  These should be in 
       the form
-        [[I, a, b, x0, y0, phi],
-         [I, a, b, x0, y0, phi],
+        [[a, b, x0, y0, phi],
+         [a, b, x0, y0, phi],
          ...]
       where each row defines an ellipse.
-      I : Additive intensity of the ellipse.
       a : Length of the major axis.
       b : Length of the minor axis.
       x0 : Horizontal offset of the centre of the ellipse.
@@ -117,60 +72,99 @@ def phantom(n=128, ellipses=None, nE=5):
         ) <= 1
 
         # Add the ellipse intensity to those pixels
-        p[locs] = 1
+        p[locs] = 255
     return p
+
+
+def create_sino_recon_pairs(f_true, noise_func=lambda x: x, recon_alg="FBP"):
+
+    # Create volume geometries
+    v, h = f_true.shape
+    vol_geom = astra.create_vol_geom(v, h)
+
+    # Create projector geometries
+    det_count = f_true.shape[0]
+    angles = np.linspace(0, np.pi, 180, endpoint=False)
+    proj_geom = astra.create_proj_geom("parallel", 1.0, det_count, angles)
+
+    # Create projector
+    projector_id = astra.create_projector("strip", proj_geom, vol_geom)
+
+    # Radon transform (generate sinogram)
+    sinogram_id, sinogram = astra.create_sino(f_true, projector_id)
+
+    # Add noise in the sinogram domain
+    sino_geom = astra.data2d.get_geometry(sinogram_id)
+    sinogram = noise_func(sinogram)
+    sinogram_id = astra.data2d.create("-sino", sino_geom, data=sinogram)
+
+    # Create a data object for the reconstruction
+    rec_id = astra.data2d.create("-vol", vol_geom)
+
+    # Set up the parameters for a reconstruction via back-projection
+    cfg = astra.astra_dict(recon_alg)
+    cfg["ReconstructionDataId"] = rec_id
+    cfg["ProjectionDataId"] = sinogram_id
+    cfg["ProjectorId"] = projector_id
+
+    # Create the algorithm object from the configuration structure
+    alg_id = astra.algorithm.create(cfg)
+
+    # Run back-projection and get the reconstruction
+    astra.algorithm.run(alg_id)
+    f_rec = astra.data2d.get(rec_id)
+    return sinogram, f_rec
+
+
+def noisy(s):
+    noise = np.random.normal(0, 255, s.shape)
+
+    return s + noise
+
+
+def generate_one():
+    f_true = phantom()
+    s, f_fbp = create_sino_recon_pairs(f_true, noise_func=noisy, recon_alg="FBP")
+    s, f_bp = create_sino_recon_pairs(f_true, noise_func=noisy, recon_alg="BP")
+    return f_true, s, f_fbp, f_bp
 
 
 def rescale(data):
     return (255.0 / data.max() * (data - data.min())).astype(np.uint8)
 
 
+def generate(n, folder_path):
+    start = time.time()
+    os.mkdir("{}/f_true".format(folder_path))
+    os.mkdir("{}/sino".format(folder_path))
+    os.mkdir("{}/f_fbp".format(folder_path))
+    os.mkdir("{}/f_bp".format(folder_path))
+    for i in range(n):
+        f_true, s, f_fbp, f_bp = generate_one()
+        Image.fromarray(rescale(f_true)).save("{}/f_true/{}.tif".format(folder_path, i))
+        Image.fromarray(rescale(s)).save("{}/sino/{}.tif".format(folder_path, i))
+        Image.fromarray(rescale(f_fbp)).save("{}/f_fbp/{}.tif".format(folder_path, i))
+        Image.fromarray(rescale(f_bp)).save("{}/f_bp/{}.tif".format(folder_path, i))
+    print("Generated {} in {:.1f} seconds!".format(n, time.time() - start))
+
+
 def main():
-    offset = initialOffset
-    keepGoing = "Y"
-    while not keepGoing == "n":
-        print("Generating samples {} to {}".format(offset, n_samples + offset))
-        for i in range(n_samples):
-            iteration = i + offset
-            clean = np.array([phantom()])
+    try:
+        num_samples = int(input("How many samples? [100] "))
+    except ValueError:
+        num_samples = 100
 
-            if add_noise:
-                obj = noisy("gauss", clean)
-            else:
-                obj = clean
-
-            Image.fromarray(rescale(clean[0])).save(
-                "{}/{}_actual.png".format(folder_path, iteration)
-            )
-            Image.fromarray(rescale(obj[0])).save(
-                "{}/{}_noisy.png".format(folder_path, iteration)
-            )
-
-            ang = tomopy.angles(180)
-            sim = tomopy.project(obj, ang)
-
-            algs = ["fbp", "gridrec"]
-            for alg in algs:
-                rec = tomopy.recon(sim, ang, algorithm=alg, ncore=4)
-                crop_rec = crop_center(rec[0], 128, 128)
-                Image.fromarray(rescale(crop_rec)).save(
-                    "{}/{}_recon_{}.png".format(folder_path, iteration, alg)
-                )
-        offset += n_samples
-        keepGoing = input("Create {} more? ([Y]/n) ".format(n_samples))
+    folder_path = str(input("What folder would you like it in? [./data/pairs] "))
+    if folder_path == "":
+        folder_path = "data/pairs"
+    try:
+        os.mkdir(folder_path)
+        print("Starting...")
+        generate(num_samples, folder_path)
+    except:
+        print("Folder already exists: Quitting.")
 
 
 if __name__ == "__main__":
-    go = False
-    try:
-        os.mkdir(folder_path)
-        go = True
-        print("Starting...")
-    except:
-        if allow_existing_folder:
-            go = True
-        else:
-            print("Folder already exists: Quitting.")
+    main()
 
-    if go:
-        main()
