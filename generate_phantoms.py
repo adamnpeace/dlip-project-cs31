@@ -6,6 +6,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from PIL import Image
 
+# Synthetic Phantom Generator
 
 def ran():
     return -0.5 + 1 * np.random.random()
