@@ -30,7 +30,7 @@ def calculateSSIM(y_true,y_pred):
     ssim = skimage.measure.compare_ssim(y_true.reshape(128,128),y_pred.reshape(128,128))
     return ssim
 
-def calculateSSIMCustom(y_true,y_pred):
+def calculateSSIMWang(y_true,y_pred):
     return skimage.measure.compare_ssim(
         y_true.reshape(128, 128), 
         y_pred.reshape(128, 128),
@@ -50,30 +50,30 @@ def calculateRuntime(autoencoder,x_test):
 def printMetricsforX(y_true,y_pred,n,autoencoder,x_test):
     psnr = []
     ssim = []
-    ssim_custom = []
+    ssim_wang = []
     entropies = []
     mse = []
     nrmse = []
     for i in range(n):
         psnr.append(calculatePSNR(y_true,y_pred))
         ssim.append(calculateSSIM(y_true,y_pred))
-        ssim_custom.append(calculateSSIMCustom(y_true,y_pred))
+        ssim_wang.append(calculateSSIMWang(y_true,y_pred))
         entropies.append(calculateEntropy(y_true,y_pred))
         mse.append(calculateMSE(y_true,y_pred))
         nrmse.append(calculateNRMSE(y_true,y_pred))
 
     time = calculateRuntime(autoencoder,x_test)
 
-    print(f"PSNR: {np.mean(psnr)}, SSIM: {np.mean(ssim)}, RMSE: {np.mean(mse)}, NRMSE: {np.mean(nrmse)}, Mean Entropy:{np.mean(entropies)}")
+    print(f"PSNR: {np.mean(psnr)}, SSIM: {np.mean(ssim)}, SSIM_WANG: {np.mean(ssim_wang)}, RMSE: {np.mean(mse)}, NRMSE: {np.mean(nrmse)}, Mean Entropy:{np.mean(entropies)}")
     print(f"Time taken: {time}")
 
 
 def printMetricsForY(y_true,y_pred):
     psnr = calculatePSNR(y_true,y_pred)
     ssim = calculateSSIM(y_true,y_pred)
-    ssim_custom = calculateSSIMCustom(y_true,y_pred)
+    ssim_wang = calculateSSIMWang(y_true,y_pred)
     entropies = calculateEntropy(y_true,y_pred)
     mse = calculateMSE(y_true,y_pred)
     nrmse = calculateNRMSE(y_true,y_pred)
 
-    print(f"PSNR: {psnr}, SSIM: {ssim}, RMSE: {mse}, NRMSE: {nrmse}, Mean Entropy:{entropies}")
+    print(f"PSNR: {psnr}, SSIM: {ssim}, SSIM_WANG: {ssim_wang}, RMSE: {mse}, NRMSE: {nrmse}, Mean Entropy:{entropies}")
