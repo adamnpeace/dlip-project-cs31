@@ -3,3 +3,5 @@
 .DS_Store
 *.save
 data
+__pycache__
+.vscode
