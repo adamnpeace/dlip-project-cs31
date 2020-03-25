@@ -1,6 +1,6 @@
 import os
 import time
-import astra
+import astra # https://anaconda.org/astra-toolbox/astra-toolbox
 import skimage
 import numpy as np
 from matplotlib import pyplot as plt
@@ -8,11 +8,7 @@ from PIL import Image
 
 # Synthetic Phantom Generator
 
-def ran():
-    return -0.5 + 1 * np.random.random()
-
-
-def phantom(n=128, ellipses=None, nE=5):
+def phantom(n=128, ellipses=None, nE=5, binary=False):
     """
     ellipses : Custom set of ellipses to use.  These should be in 
       the form
@@ -30,20 +26,17 @@ def phantom(n=128, ellipses=None, nE=5):
       The image bounding box in the algorithm is [-1, -1], [1, 1], 
       so the values of a, b, x0, y0 should all be specified with
       respect to this box.
-
-
     """
     if not ellipses:
         ellipses = []
         for _ in range(nE):
             ellipses.append(
                 [
-                    ran(),
-                    ran(),
-                    ran(),
-                    ran(),
-                    ran(),  # np.random.random(),
-                    # np.random.random(),
+                    (0.25 + 0.25 * np.random.random()),
+                    (0.25 + 0.25 * np.random.random()), # Between 0.25 and 0.5
+                    (np.random.random() - 0.5), # Between -0.5 and 0.5
+                    (np.random.random() - 0.5),
+                    (np.random.random() - 0.5),
                 ]
             )
 
@@ -73,7 +66,10 @@ def phantom(n=128, ellipses=None, nE=5):
         ) <= 1
 
         # Add the ellipse intensity to those pixels
-        p[locs] = 255
+        if binary:
+            p[locs] = 255
+        else:
+            p[locs] = 255 * (0.5 + 0.5 * np.random.random()) # Between 128 and 255
     return p
 
 
@@ -123,10 +119,28 @@ def noisy(s):
     return s + noise
 
 
-def generate_one():
-    f_true = phantom()
-    s, f_fbp = create_sino_recon_pairs(f_true, noise_func=noisy, recon_alg="FBP")
-    s, f_bp = create_sino_recon_pairs(f_true, noise_func=noisy, recon_alg="BP")
+def in_painting(s):
+    res = s
+    start = int(2 * s.shape[0] / 5)
+    end = int(3 * s.shape[0] / 5)
+    res[start:end, :] = 0
+    return res
+
+
+def undersampling(s):
+    res = s
+    fraction = 20
+    for i in range(fraction):
+        start = int((i + 0.25) * s.shape[0] / fraction)
+        end = int((i + 0.75) * s.shape[0] / fraction)
+        res[start:end, :] = 0
+    return res
+
+
+def generate_one(noise_func=noisy, binary=False):
+    f_true = phantom(binary=binary)
+    s, f_fbp = create_sino_recon_pairs(f_true, noise_func=noise_func, recon_alg="FBP")
+    s, f_bp = create_sino_recon_pairs(f_true, noise_func=noise_func, recon_alg="BP")
     return f_true, s, f_fbp, f_bp
 
 
@@ -134,14 +148,21 @@ def rescale(data):
     return (255.0 / data.max() * (data - data.min())).astype(np.uint8)
 
 
-def generate(n, folder_path):
+def generate(n, folder_path, noise_type, binary):
     start = time.time()
     os.mkdir("{}/f_true".format(folder_path))
     os.mkdir("{}/sino".format(folder_path))
     os.mkdir("{}/f_fbp".format(folder_path))
     os.mkdir("{}/f_bp".format(folder_path))
+
+    noise_func = noisy
+    if noise_type == "inpainting":
+        noise_func = in_painting
+    elif noise_type == "undersampling":
+        noise_func = undersampling
+
     for i in range(n):
-        f_true, s, f_fbp, f_bp = generate_one()
+        f_true, s, f_fbp, f_bp = generate_one(noise_func=noise_func, binary=binary)
         Image.fromarray(rescale(f_true)).save("{}/f_true/{}.tif".format(folder_path, i))
         Image.fromarray(rescale(s)).save("{}/sino/{}.tif".format(folder_path, i))
         Image.fromarray(rescale(f_fbp)).save("{}/f_fbp/{}.tif".format(folder_path, i))
@@ -161,7 +182,18 @@ def main():
     try:
         os.mkdir(folder_path)
         print("Starting...")
-        generate(num_samples, folder_path)
+        
+        noise_type = str(input("Noise type? (gaussian/inpainting/[undersampling]) "))
+        if noise_type == "":
+            noise_type = "undersampling"
+        
+        ground_truth_type = str(input("Construct Ground truth from binary image? (y/[N]) "))
+        binary = False
+        if ground_truth_type == "y":
+            binary = True
+        
+        generate(num_samples, folder_path, noise_type=noise_type, binary=binary)
+        
     except:
         print("Folder already exists: Quitting.")
 
